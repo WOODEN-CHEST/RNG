@@ -92,7 +92,7 @@ static void* AllocateMemory(size_t size)
 }
 
 /* Number analysis. */
-static size_t GetSequenceLength(int* numberArray, size_t arraySize)
+static size_t GetSameLimitSequenceLength(int* numberArray, size_t arraySize)
 {
 	if (arraySize <= 1)
 	{
@@ -111,6 +111,34 @@ static size_t GetSequenceLength(int* numberArray, size_t arraySize)
 	}
 
 	return arraySize;
+}
+
+static size_t GetMixedLimitSequenceLength(int* numberArray, size_t arraySize)
+{
+	if (arraySize <= 1)
+	{
+		return arraySize;
+	}
+
+	size_t SequenceSize = 1;
+	size_t SearchIndex = 0;
+	for (size_t Index = 0; Index < arraySize; Index++)
+	{
+		if (numberArray[Index] != numberArray[SearchIndex])
+		{
+			SequenceSize = Index + 1;
+			SearchIndex = 0;
+			continue;
+		}
+
+		SearchIndex++;
+		if (SearchIndex == SequenceSize)
+		{
+			SearchIndex = 0;
+		}
+	}
+
+	return SequenceSize;
 }
 
 static double GetAverageValue(int* numberArray, size_t arraySize)
@@ -146,7 +174,8 @@ static void GetSequenceInfoForSeed(LCGSequenceInfo* info,
 		NumberArray[i] = (int)GenerateNumber(&GeneratorState, extMod);
 	}
 
-	info->SequenceLength = GetSequenceLength(NumberArray, ELEMENT_COUNT);
+	info->SequenceLength = extMod == intMod ? GetSameLimitSequenceLength(NumberArray, ELEMENT_COUNT)
+		: GetMixedLimitSequenceLength(NumberArray, ELEMENT_COUNT);
 	info->AverageValue = GetAverageValue(NumberArray, ELEMENT_COUNT);
 
 	free(NumberArray);
