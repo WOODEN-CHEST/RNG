@@ -6,15 +6,6 @@
 #include <string.h>
 
 // Macros.
-#define INCREMENT 5
-#define MULTIPLY 9
-#define SEED 3
-
-#define SEED_STEP 1
-#define MAX_SEED 10
-#define MOD_STEP 100
-#define MAX_MOD 1000000
-
 #define ELEMENT_COUNT 100000
 
 #define DEFAULT_INCREMENT 5
@@ -25,7 +16,9 @@
 #define DEFAULT_EXT_MIN 100
 #define DEFAULT_EXT_MAX 1000000 
 #define DEFAULT_EXT_STEP 100 
-#define DEFAULT_INT_MAX 0xffffffffffffffff 
+#define DEFAULT_INT_MAX 0
+
+#define USE_EXT_AS_INT 0
 
 #define ARG_PATH_NAME "path"
 #define ARG_INCREMENT_NAME "inc"
@@ -37,6 +30,8 @@
 #define ARG_EXT_MAX_NAME "ext_max" 
 #define ARG_EXT_STEP_NAME "ext_step" 
 #define ARG_INT_MAX_NAME "int_max" 
+
+#define ARG_SPECIAL_MAX_OPERATOR "max" 
 
 #define VALUE_ASSIGNMENT_OPERATOR '='
 
@@ -64,7 +59,7 @@ typedef struct LCGStateStruct
 	unsigned long long LastValue;
 	unsigned long long Increment;
 	unsigned long long Multiply;
-	unsigned long long Mod;
+	unsigned long long IntMod;
 } LCGState;
 
 typedef struct LCGSequenceInfoStruct
@@ -75,7 +70,7 @@ typedef struct LCGSequenceInfoStruct
 
 typedef struct LCGSequenceCollectionInfoStruct
 {
-	unsigned long long Mod;
+	unsigned long long ExtMod;
 	double AverageValue;
 	size_t SequenceLength;
 } LCGSequenceCollectionInfo;
@@ -130,20 +125,25 @@ static double GetAverageValue(int* numberArray, size_t arraySize)
 }
 
 /* Number generation. */
-static unsigned long long GenerateNumber(LCGState* state)
+static unsigned long long GenerateNumber(LCGState* state, unsigned long long extMod)
 {
-	state->LastValue = ((state->Multiply * state->LastValue) + state->Increment) % state->Mod;
-	return state->LastValue;
+	state->LastValue = ((state->Multiply * state->LastValue) + state->Increment) % state->IntMod;
+	return state->LastValue % extMod;
 }
 
-static void GetSequenceInfoForSeed(LCGSequenceInfo* info, unsigned long long seed, unsigned long long mod)
+static void GetSequenceInfoForSeed(LCGSequenceInfo* info,
+	unsigned long long increment,
+	unsigned long long multiply,
+	unsigned long long seed,
+	unsigned long long extMod,
+	unsigned long long intMod)
 {
-	LCGState GeneratorState = { seed, INCREMENT, MULTIPLY, mod };
+	LCGState GeneratorState = { seed, increment, multiply, intMod };
 	int* NumberArray = (int*)AllocateMemory(sizeof(int) * ELEMENT_COUNT);
 
 	for (size_t i = 0; i < ELEMENT_COUNT; i++)
 	{
-		NumberArray[i] = (int)GenerateNumber(&GeneratorState);
+		NumberArray[i] = (int)GenerateNumber(&GeneratorState, extMod);
 	}
 
 	info->SequenceLength = GetSequenceLength(NumberArray, ELEMENT_COUNT);
@@ -152,56 +152,66 @@ static void GetSequenceInfoForSeed(LCGSequenceInfo* info, unsigned long long see
 	free(NumberArray);
 }
 
-static void GetAverageSequenceInfoForMod(LCGSequenceCollectionInfo* info, unsigned long long mod)
+static void GetAverageSequenceInfoForMod(LCGSequenceCollectionInfo* info, 
+	unsigned long long increment,
+	unsigned long long multiply,
+	unsigned long long seedMin,
+	unsigned long long seedMax,
+	unsigned long long seedStep,
+	unsigned long long extMod,
+	unsigned long long intMod)
 {
 	info->AverageValue = 0.0;
 	info->SequenceLength = 0;
-	info->Mod = mod;
+	info->ExtMod = extMod;
 
 	LCGSequenceInfo SingleSequenceInfo;
 
-	for (unsigned long long Seed = 0; Seed < MAX_SEED; Seed++)
+	for (unsigned long long Seed = seedMin; Seed <= seedMax; Seed += seedStep)
 	{
-		GetSequenceInfoForSeed(&SingleSequenceInfo, Seed, mod);
+		GetSequenceInfoForSeed(&SingleSequenceInfo, increment, multiply, Seed, extMod, intMod);
 		info->AverageValue += SingleSequenceInfo.AverageValue;
 		info->SequenceLength += SingleSequenceInfo.SequenceLength;
 	}
 
-	info->AverageValue /= (double)MAX_SEED;
-	info->SequenceLength /= MAX_SEED;
-}
-
-static void GetSingleSequenceInfoForMod(LCGSequenceCollectionInfo* info, unsigned long long mod)
-{
-	LCGSequenceInfo SingleSequenceInfo;
-	GetSequenceInfoForSeed(&SingleSequenceInfo, SEED, mod);
-
-	info->Mod = mod;
-	info->AverageValue = SingleSequenceInfo.AverageValue;
-	info->SequenceLength = SingleSequenceInfo.SequenceLength;
+	info->AverageValue /= 1.0 + (double)((seedMax - seedMin) / seedStep);
+	info->SequenceLength /= 1 + ((seedMax - seedMin) / seedStep);
 }
 
 
 /* Exporting to file. */
-static void ExportToFile(const char* path, LCGSequenceCollectionInfo* info, size_t infoEntryCount)
+static void ExportToFile(const char* path, ProgramArgs* args, LCGSequenceCollectionInfo* info, size_t infoEntryCount)
 {
 	remove(path);
 
 	FILE* File = fopen(path, "w");
 	if (!File)
 	{
-		printf("Failed to export data to file because the file couldn't be opened.");
+		printf("Failed to export data to file because the file couldn't be opened.\n");
 		return;
 	}
 
-	fprintf(File, "Mod; Average Sequence Length; Average Value\n");
+	fprintf(File, "Increment: %llu; Multiply: %llu; SeedMin: %llu; SeedMax: %llu; SeedStep: %llu; ExtMin: %llu; ExtMax: %llu; ExtStep: %llu; ",
+		args->Increment, args->Multiply, args->SeedMin, args->SeedMax, args->SeedStep, args->ExtMin, args->ExtMax, args->ExtStep);
+
+	if (args->IntMax == USE_EXT_AS_INT)
+	{
+		fprintf(File, "IntMax: Same as ExtMax");
+	}
+	else
+	{
+		fprintf(File, "IntMax: %llu", args->IntMax);
+	}
+
+	fprintf(File, "\nMod; Average Sequence Length; Average Value\n");
 
 	for (size_t i = 0; i < infoEntryCount; i++)
 	{
-		fprintf(File, "%llu; %llu; %.2f\n", info[i].Mod, info[i].SequenceLength, info[i].AverageValue);
+		fprintf(File, "%llu; %llu; %.2f\n", info[i].ExtMod, info[i].SequenceLength, info[i].AverageValue);
 	}
 
 	fclose(File);
+	printf("Export finished.\n");
 }
 
 
@@ -209,7 +219,7 @@ static void ExportToFile(const char* path, LCGSequenceCollectionInfo* info, size
 static char* ParseWord(char* string, char* buffer, size_t bufferSize)
 {
 	size_t Index;
-	for (Index = 0; (Index < bufferSize - 1) && !IsLetterOrUnderscore(*string) && (*string != '\0'); Index++, string++)
+	for (Index = 0; (Index < bufferSize - 1) && IsLetterOrUnderscore(*string) && (*string != '\0'); Index++, string++)
 	{
 		buffer[Index] = *string;
 	}
@@ -235,24 +245,26 @@ static bool AssignArgumentValue(char* argumentName, char* value, ProgramArgs* pr
 		return true;
 	}
 
-	unsigned long long Value = strtoull(value, NULL, 10);
-	if (strcmp(value, ARG_INCREMENT_NAME))
+	unsigned long long Value;
+	Value = !strcmp(value, ARG_SPECIAL_MAX_OPERATOR) ? 0xffffffffffffffff : strtoull(value, NULL, 10);
+
+	if (!strcmp(argumentName, ARG_INCREMENT_NAME))
 	{
-		programArgs->Increment = value;
+		programArgs->Increment = Value;
 	}
-	else if (strcmp(value, ARG_MULTIPLY_NAME))
+	else if (!strcmp(argumentName, ARG_MULTIPLY_NAME))
 	{
 		programArgs->Multiply = Value;
 	}
-	else if (strcmp(value, ARG_SEED_MIN_NAME))
+	else if (!strcmp(argumentName, ARG_SEED_MIN_NAME))
 	{
 		programArgs->SeedMin = Value;
 	}
-	else if (strcmp(value, ARG_SEED_MAX_NAME))
+	else if (!strcmp(argumentName, ARG_SEED_MAX_NAME))
 	{
 		programArgs->SeedMax = Value;
 	}
-	else if (strcmp(value, ARG_SEED_STEP_NAME))
+	else if (!strcmp(argumentName, ARG_SEED_STEP_NAME))
 	{
 		if (Value == 0)
 		{
@@ -261,7 +273,7 @@ static bool AssignArgumentValue(char* argumentName, char* value, ProgramArgs* pr
 		}
 		programArgs->SeedStep = Value;
 	}
-	else if (strcmp(value, ARG_EXT_MIN_NAME))
+	else if (!strcmp(argumentName, ARG_EXT_MIN_NAME))
 	{
 		if (Value == 0)
 		{
@@ -270,7 +282,7 @@ static bool AssignArgumentValue(char* argumentName, char* value, ProgramArgs* pr
 		}
 		programArgs->ExtMin = Value;
 	}
-	else if (strcmp(value, ARG_EXT_MAX_NAME))
+	else if (!strcmp(argumentName, ARG_EXT_MAX_NAME))
 	{
 		if (Value == 0)
 		{
@@ -279,7 +291,7 @@ static bool AssignArgumentValue(char* argumentName, char* value, ProgramArgs* pr
 		}
 		programArgs->ExtMax = Value;
 	}
-	else if (strcmp(value, ARG_EXT_STEP_NAME))
+	else if (!strcmp(argumentName, ARG_EXT_STEP_NAME))
 	{
 		if (Value == 0)
 		{
@@ -288,13 +300,8 @@ static bool AssignArgumentValue(char* argumentName, char* value, ProgramArgs* pr
 		}
 		programArgs->ExtStep = Value;
 	}
-	else if (strcmp(value, ARG_INT_MAX_NAME))
+	else if (!strcmp(argumentName, ARG_INT_MAX_NAME))
 	{
-		if (Value == 0)
-		{
-			printf("Maximum internal value may not be 0.");
-			return false;
-		}
 		programArgs->IntMax = Value;
 	}
 	else
@@ -343,6 +350,24 @@ static bool ReadCMDArguments(int argc, char** argv, ProgramArgs* programArgs)
 			return false;
 		}
 	}
+
+	if (programArgs->ExportPath == NULL)
+	{
+		printf("Missing export path.");
+		return false;
+	}
+	if (programArgs->ExtMax < programArgs->ExtMin)
+	{
+		printf("Invalid input, ExtMax < ExtMin");
+		return false;
+	}
+	if (programArgs->SeedMax < programArgs->SeedMin)
+	{
+		printf("Invalid input, SeedMax < SeedMin");
+		return false;
+	}
+
+	return true;
 }
 
 
@@ -355,24 +380,18 @@ int main(int argc, char** argv)
 		return EXIT_FAILURE;
 	}
 
-	if (argc < 2)
-	{
-		printf("Missing exported file path.");
-		return -1;
-	}
-
-	size_t ElementCount = MAX_MOD / MOD_STEP;
+	size_t ElementCount = (Args.ExtMax - Args.ExtMin) / Args.ExtStep;
 	LCGSequenceCollectionInfo* SequenceCollectionInfoArray = (LCGSequenceCollectionInfo*)AllocateMemory(sizeof(LCGSequenceCollectionInfo) * ElementCount);
 
-	for (unsigned long long Mod = MOD_STEP, i = 0; i < ElementCount; Mod += MOD_STEP, i++)
+	for (unsigned long long ExtMod = Args.ExtMin, i = 0; i < ElementCount; ExtMod += Args.ExtStep, i++)
 	{
-		GetSingleSequenceInfoForMod(SequenceCollectionInfoArray + i, Mod);
-		printf("Finished sequence for mod value %llu, (%.2f%% done)\n", Mod, (double)(i + 1) / (double)ElementCount * 100.0);
+		GetAverageSequenceInfoForMod(SequenceCollectionInfoArray + i, Args.Increment, Args.Multiply, Args.SeedMin, Args.SeedMax, Args.SeedStep,
+			ExtMod, Args.IntMax == USE_EXT_AS_INT ? ExtMod : Args.IntMax);
+		printf("Finished sequence for mod value %llu, (%.2f%% done)\n", ExtMod, (double)(i + 1) / (double)ElementCount * 100.0);
 	}
 
 	printf("Exporting data...\n");
-	ExportToFile(argv[1], SequenceCollectionInfoArray, ElementCount);
-	printf("Finished!\n");
+	ExportToFile(Args.ExportPath, &Args, SequenceCollectionInfoArray, ElementCount);;
 
 	return 0;
 }
