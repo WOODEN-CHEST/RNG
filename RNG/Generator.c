@@ -409,7 +409,7 @@ int main(int argc, char** argv)
 		return EXIT_FAILURE;
 	}
 
-	size_t ElementCount = (Args.ExtMax - Args.ExtMin) / Args.ExtStep;
+	size_t ElementCount = (Args.ExtMax - Args.ExtMin) / Args.ExtStep + 1;
 	LCGSequenceCollectionInfo* SequenceCollectionInfoArray = (LCGSequenceCollectionInfo*)AllocateMemory(sizeof(LCGSequenceCollectionInfo) * ElementCount);
 
 	for (unsigned long long ExtMod = Args.ExtMin, i = 0; i < ElementCount; ExtMod += Args.ExtStep, i++)
